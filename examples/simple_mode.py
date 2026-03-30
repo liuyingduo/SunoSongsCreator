@@ -2,7 +2,7 @@
 import httpx
 import time
 
-BASE_URL = "http://127.0.0.1:8005/api"
+BASE_URL = "http://207.180.218.216:8005/api"
 
 def create_simple_task():
     # 只需要描述内容，可以开启/关闭 纯背景音乐 (make_instrumental)
@@ -14,8 +14,8 @@ def create_simple_task():
     
     print(f"🚀 [简单模式] 正在请求生成: '{payload['prompt']}'")
     resp = httpx.post(f"{BASE_URL}/tasks", json=payload)
-    if resp.status_code != 201:
-        print(f"❌ 提交失败: {resp.text}")
+    if not resp.is_success:
+        print(f"❌ 提交失败: {resp.status_code} - {resp.text}")
         return
     
     task_id = resp.json()["task_id"]

@@ -20,8 +20,8 @@ def create_custom_task():
     
     print(f"🚀 [定制模式] 正在请求生成: '{payload['title']}'")
     resp = httpx.post(f"{BASE_URL}/tasks", json=payload)
-    if resp.status_code != 201:
-        print(f"❌ 提交失败: {resp.text}")
+    if not resp.is_success:
+        print(f"❌ 提交失败: {resp.status_code} - {resp.text}")
         return
     
     task_id = resp.json()["task_id"]
