@@ -60,21 +60,15 @@ class SchedulerService:
 
     async def _refresh_single(self, repo: AccountRepository, acc: AccountInDB) -> None:
         try:
-            import threading
             from suno import SongsGen
 
-            def _sync_check() -> dict:
-                gen = SongsGen(acc.cookie)
-                return gen.get_limit_left()
-
-            credits = await asyncio.get_running_loop().run_in_executor(
-                None, _sync_check
-            )
-            await repo.update_credit(acc.email, credits)
-            logger.info(f"Refreshed {acc.email}: credits={credits.get('total_credits', 0)}")
+            async with SongsGen(acc.cookie) as gen:
+                credits = await gen.get_limit_left()
+                await repo.update_credit(acc.account_name, credits)
+                logger.info(f"Refreshed {acc.account_name}: credits={credits.get('total_credits', 0)}")
         except Exception as exc:
-            logger.warning(f"Failed to refresh {acc.email}: {exc}")
-            await repo.set_active(acc.email, False)
+            logger.warning(f"Failed to refresh {acc.account_name}: {exc}")
+            await repo.set_active(acc.account_name, False)
 
 
 scheduler_service = SchedulerService()

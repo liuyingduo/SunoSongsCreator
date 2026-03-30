@@ -18,12 +18,13 @@ class TaskCreate(BaseModel):
     title: str | None = None
     make_instrumental: bool = False
     is_custom: bool = False
+    model: str = "chirp-v3.5"
 
 
 class TaskInDB(TaskCreate):
     task_id: str
     status: TaskStatus = TaskStatus.PENDING
-    account_email: str | None = None
+    account_name: str | None = None
     result: dict | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -39,7 +40,8 @@ class TaskResponse(BaseModel):
     title: str | None
     make_instrumental: bool
     is_custom: bool
-    account_email: str | None
+    model: str
+    account_name: str | None
     result: dict | None
     error: str | None
     created_at: datetime
@@ -94,8 +96,8 @@ class TaskRepository:
             update["error"] = error
         await self.col.update_one({"task_id": task_id}, {"$set": update})
 
-    async def assign_account(self, task_id: str, email: str) -> None:
+    async def assign_account(self, task_id: str, account_name: str) -> None:
         await self.col.update_one(
             {"task_id": task_id},
-            {"$set": {"account_email": email, "updated_at": datetime.utcnow()}},
+            {"$set": {"account_name": account_name, "updated_at": datetime.utcnow()}},
         )

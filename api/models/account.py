@@ -1,12 +1,12 @@
 """账号数据模型——对应 MongoDB accounts 集合。"""
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 class AccountBase(BaseModel):
-    email: EmailStr
-    cookie: str = Field(exclude=True)
+    account_name: str
+    cookie: str
 
 
 class AccountCreate(AccountBase):
@@ -14,8 +14,6 @@ class AccountCreate(AccountBase):
 
 
 class AccountInDB(AccountBase):
-    email: EmailStr
-    cookie: str = Field(exclude=True)
     total_credits: int = 0
     free_songs: int = 0
     web_v4_gens: int = 0
@@ -32,7 +30,7 @@ class AccountInDB(AccountBase):
 
 
 class AccountResponse(BaseModel):
-    email: EmailStr
+    account_name: str
     total_credits: int
     free_songs: int
     web_v4_gens: int
@@ -55,18 +53,21 @@ class AccountRepository:
         return self._db[self._collection_name]
 
     async def upsert(self, account: AccountInDB) -> None:
+        account_name = account.account_name
+        data = account.model_dump()
+        data.pop("account_name")
         await self.col.update_one(
-            {"email": account.email},
-            {"$set": account.model_dump(exclude={"email"})},
+            {"account_name": account_name},
+            {"$set": data},
             upsert=True,
         )
 
-    async def find_by_email(self, email: str) -> AccountInDB | None:
-        doc = await self.col.find_one({"email": email})
-        if doc:
-            doc.pop("_id", None)
-            return AccountInDB(**doc)
-        return None
+    async def find_by_name(self, account_name: str) -> AccountInDB | None:
+        doc = await self.col.find_one({"account_name": account_name})
+        if doc is None:
+            return None
+        doc.pop("_id", None)
+        return AccountInDB(**doc)
 
     async def find_all(self) -> list[AccountInDB]:
         cursor = self.col.find({})
@@ -84,13 +85,13 @@ class AccountRepository:
             results.append(AccountInDB(**doc))
         return results
 
-    async def delete_by_email(self, email: str) -> bool:
-        result = await self.col.delete_one({"email": email})
+    async def delete_by_name(self, account_name: str) -> bool:
+        result = await self.col.delete_one({"account_name": account_name})
         return result.deleted_count > 0
 
-    async def update_credit(self, email: str, credits: dict) -> None:
+    async def update_credit(self, account_name: str, credits: dict) -> None:
         await self.col.update_one(
-            {"email": email},
+            {"account_name": account_name},
             {
                 "$set": {
                     "total_credits": credits.get("total_credits", 0),
@@ -102,14 +103,17 @@ class AccountRepository:
             },
         )
 
-    async def set_in_pool(self, email: str, in_pool: bool) -> None:
+    async def set_in_pool(self, account_name: str, in_pool: bool) -> None:
         await self.col.update_one(
-            {"email": email},
+            {"account_name": account_name},
             {"$set": {"is_in_pool": in_pool, "updated_at": datetime.utcnow()}},
         )
 
-    async def set_active(self, email: str, active: bool) -> None:
+    async def set_active(self, account_name: str, active: bool) -> None:
         await self.col.update_one(
-            {"email": email},
+            {"account_name": account_name},
             {"$set": {"is_active": active, "updated_at": datetime.utcnow()}},
         )
+
+    async def clear_all_pool_flags(self) -> None:
+        await self.col.update_many({}, {"$set": {"is_in_pool": False}})

@@ -46,7 +46,7 @@ uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 |------|------|------|
 | POST | `/api/accounts` | 注册账号（发送 cookie） |
 | GET | `/api/accounts` | 列出所有已注册账号 |
-| DELETE | `/api/accounts/{email}` | 删除账号 |
+| DELETE | `/api/accounts/{account_name}` | 删除账号 |
 | POST | `/api/tasks` | 创建歌曲生成任务 |
 | GET | `/api/tasks/{task_id}` | 查询任务状态 |
 | GET | `/api/health` | 健康检查 |
@@ -57,7 +57,7 @@ uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 # 注册账号
 curl -X POST "http://localhost:8000/api/accounts" \
   -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "cookie": "__session=xxxx"}'
+  -d '{"account_name": "myaccount", "cookie": "__session=xxxx"}'
 
 # 创建生成任务
 curl -X POST "http://localhost:8000/api/tasks" \

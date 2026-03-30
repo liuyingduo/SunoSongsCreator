@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PoolAccount:
-    email: str
+    account_name: str
     cookie: str
     total_credits: int = 0
     free_songs: int = 0
@@ -42,13 +42,14 @@ class PoolManager:
 
     async def initialize(self) -> None:
         logger.info("Initializing account pool...")
+        await self._repo.clear_all_pool_flags()
         accounts = await self._repo.find_active()
         for acc in accounts:
-            if acc.has_credit and not acc.is_in_pool:
+            if acc.has_credit:
                 credits = await self._refresh_account_credits(acc)
                 if credits and (credits.get("total_credits", 0) > 0 or credits.get("free_songs", 0) > 0):
                     await self._add_to_pool(PoolAccount(
-                        email=acc.email,
+                        account_name=acc.account_name,
                         cookie=acc.cookie,
                         total_credits=credits.get("total_credits", 0),
                         free_songs=credits.get("free_songs", 0),
@@ -59,39 +60,34 @@ class PoolManager:
         async with self._lock:
             for acc in self._pool:
                 if acc.in_use:
-                    logger.warning(f"Account {acc.email} still in use during shutdown.")
+                    logger.warning(f"Account {acc.account_name} still in use during shutdown.")
+                await self._repo.set_in_pool(acc.account_name, False)
             self._pool.clear()
-            await self._repo.find_all()  # sync pool state to db
 
     async def _refresh_account_credits(self, acc: AccountInDB) -> dict | None:
         try:
-            loop = asyncio.get_running_loop()
-
-            def _sync_check() -> dict:
-                gen = SongsGen(acc.cookie)
-                return gen.get_limit_left()
-
-            credits = await loop.run_in_executor(None, _sync_check)
-            await self._repo.update_credit(acc.email, credits)
-            return credits
+            async with SongsGen(acc.cookie) as gen:
+                credits = await gen.get_limit_left()
+                await self._repo.update_credit(acc.account_name, credits)
+                return credits
         except Exception as exc:
-            logger.warning(f"Failed to refresh credits for {acc.email}: {exc}")
-            await self._repo.set_active(acc.email, False)
+            logger.warning(f"Failed to refresh credits for {acc.account_name}: {exc}")
+            await self._repo.set_active(acc.account_name, False)
             return None
 
     async def _add_to_pool(self, account: PoolAccount) -> None:
         if len(self._pool) >= self._settings.pool_max_size:
             return
-        if any(a.email == account.email for a in self._pool):
+        if any(a.account_name == account.account_name for a in self._pool):
             return
         self._pool.append(account)
-        await self._repo.set_in_pool(account.email, True)
-        logger.info(f"Added {account.email} to pool (credits: {account.total_credits})")
+        await self._repo.set_in_pool(account.account_name, True)
+        logger.info(f"Added {account.account_name} to pool (credits: {account.total_credits})")
 
-    async def _remove_from_pool(self, email: str) -> None:
-        self._pool = deque(a for a in self._pool if a.email != email)
-        await self._repo.set_in_pool(email, False)
-        logger.info(f"Removed {email} from pool.")
+    async def _remove_from_pool(self, account_name: str) -> None:
+        self._pool = deque(a for a in self._pool if a.account_name != account_name)
+        await self._repo.set_in_pool(account_name, False)
+        logger.info(f"Removed {account_name} from pool.")
 
     @asynccontextmanager
     async def acquire(self):
@@ -112,12 +108,12 @@ class PoolManager:
         finally:
             account.in_use = False
 
-    async def return_account(self, email: str) -> None:
+    async def return_account(self, account_name: str) -> None:
         async with self._lock:
             for acc in self._pool:
-                if acc.email == email:
+                if acc.account_name == account_name:
                     if not acc.has_credit:
-                        await self._remove_from_pool(email)
+                        await self._remove_from_pool(account_name)
                         await self._replenish_pool()
                     return
 
@@ -125,57 +121,57 @@ class PoolManager:
         """当池中账号少于最大容量时，从数据库补充。"""
         while len(self._pool) < self._settings.pool_max_size:
             accounts = await self._repo.find_active()
-            in_pool_emails = {a.email for a in self._pool}
-            candidates = [a for a in accounts if a.email not in in_pool_emails]
+            in_pool_account_names = {a.account_name for a in self._pool}
+            candidates = [a for a in accounts if a.account_name not in in_pool_account_names]
             if not candidates:
                 break
             for acc in candidates:
                 credits = await self._refresh_account_credits(acc)
                 if credits and (credits.get("total_credits", 0) > 0 or credits.get("free_songs", 0) > 0):
                     await self._add_to_pool(PoolAccount(
-                        email=acc.email,
+                        account_name=acc.account_name,
                         cookie=acc.cookie,
                         total_credits=credits.get("total_credits", 0),
                         free_songs=credits.get("free_songs", 0),
                     ))
                     break
 
-    async def check_and_update_after_request(self, email: str) -> None:
+    async def check_and_update_after_request(self, account_name: str) -> None:
         """请求结束后检查余额并更新池。"""
         accounts = await self._repo.find_active()
-        acc_in_db = next((a for a in accounts if a.email == email), None)
+        acc_in_db = next((a for a in accounts if a.account_name == account_name), None)
         if not acc_in_db:
-            await self._remove_from_pool(email)
+            await self._remove_from_pool(account_name)
             await self._replenish_pool()
             return
 
         credits = await self._refresh_account_credits(acc_in_db)
         async with self._lock:
-            pool_acc = next((a for a in self._pool if a.email == email), None)
+            pool_acc = next((a for a in self._pool if a.account_name == account_name), None)
             if pool_acc:
                 pool_acc.total_credits = credits.get("total_credits", 0) if credits else 0
                 pool_acc.free_songs = credits.get("free_songs", 0) if credits else 0
                 if not pool_acc.has_credit:
-                    await self._remove_from_pool(email)
+                    await self._remove_from_pool(account_name)
                     await self._replenish_pool()
 
-    async def register_account(self, email: str, cookie: str) -> dict:
+    async def register_account(self, account_name: str, cookie: str) -> dict:
         """注册/更新账号，写入数据库并补充池。"""
-        gen = SongsGen(cookie)
-        credits = gen.get_limit_left()
-        account = AccountInDB(
-            email=email,
-            cookie=cookie,
-            total_credits=credits.get("total_credits", 0),
-            free_songs=credits.get("free_songs", 0),
-            web_v4_gens=credits.get("web_v4_gens", 0),
-            mobile_v4_gens=credits.get("mobile_v4_gens", 0),
-            is_active=True,
-            last_checked=None,
-        )
-        await self._repo.upsert(account)
-        await self._replenish_pool()
-        return credits
+        async with SongsGen(cookie) as gen:
+            credits = await gen.get_limit_left()
+            account = AccountInDB(
+                account_name=account_name,
+                cookie=cookie,
+                total_credits=credits.get("total_credits", 0),
+                free_songs=credits.get("free_songs", 0),
+                web_v4_gens=credits.get("web_v4_gens", 0),
+                mobile_v4_gens=credits.get("mobile_v4_gens", 0),
+                is_active=True,
+                last_checked=None,
+            )
+            await self._repo.upsert(account)
+            await self._replenish_pool()
+            return credits
 
     async def get_pool_status(self) -> dict:
         async with self._lock:
@@ -183,7 +179,7 @@ class PoolManager:
                 "pool_size": len(self._pool),
                 "max_size": self._settings.pool_max_size,
                 "accounts": [
-                    {"email": a.email, "total_credits": a.total_credits,
+                    {"account_name": a.account_name, "total_credits": a.total_credits,
                      "free_songs": a.free_songs, "in_use": a.in_use}
                     for a in self._pool
                 ],

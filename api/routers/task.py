@@ -40,8 +40,8 @@ async def _execute_and_sync(task: TaskInDB) -> None:
     try:
         await create_song_task(task)
     finally:
-        if task.account_email:
-            await pool_manager.check_and_update_after_request(task.account_email)
+        if task.account_name:
+            await pool_manager.check_and_update_after_request(task.account_name)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)

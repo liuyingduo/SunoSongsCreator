@@ -15,21 +15,21 @@ logger = logging.getLogger(__name__)
 async def register_account(payload: AccountCreate) -> AccountResponse:
     """
     注册（上传）账号：
-    - 保存邮箱与 Cookie 到 MongoDB
+    - 保存账号名与 Cookie 到 MongoDB
     - 立即查询该账号的余额
     - 视余额情况决定是否加入可用账号池
     """
     repo = AccountRepository(mongodb.db)
     try:
-        credits = await pool_manager.register_account(payload.email, payload.cookie)
+        credits = await pool_manager.register_account(payload.account_name, payload.cookie)
     except Exception as exc:
-        logger.error(f"Failed to register account {payload.email}: {exc}")
+        logger.error(f"Failed to register account {payload.account_name}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to register account: {exc}",
         )
 
-    account_in_db = await repo.find_by_email(payload.email)
+    account_in_db = await repo.find_by_name(payload.account_name)
     if not account_in_db:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -46,17 +46,17 @@ async def list_accounts() -> list[AccountResponse]:
     return [AccountResponse(**acc.model_dump()) for acc in accounts]
 
 
-@router.delete("/accounts/{email}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_account(email: str) -> None:
-    """删除指定邮箱的账号，同时从池中移除。"""
+@router.delete("/accounts/{account_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(account_name: str) -> None:
+    """删除指定账号名的账号，同时从池中移除。"""
     repo = AccountRepository(mongodb.db)
-    deleted = await repo.delete_by_email(email)
+    deleted = await repo.delete_by_name(account_name)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Account with email '{email}' not found.",
+            detail=f"Account '{account_name}' not found.",
         )
-    logger.info(f"Deleted account: {email}")
+    logger.info(f"Deleted account: {account_name}")
 
 
 @router.get("/accounts/pool/status")
