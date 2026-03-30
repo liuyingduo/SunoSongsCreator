@@ -34,16 +34,10 @@
 python examples/test_api.py "写一首关于程序员在深夜修 Bug 的流行摇滚"
 ```
 
-### 2. 简单模式 (Simple Mode)
-仅需提供文字描述即可开始生成。
+### 2. 统一示例 (Unified Mode)
+一个脚本覆盖所有常用字段，适合直接修改 payload 进行测试。
 ```bash
-python examples/simple_mode.py
-```
-
-### 3. 定制模式 (Custom Mode)
-支持自定义歌词、曲风、标题，并可选模型版本（如 v3.5, v4, v5, v5.5）。
-```bash
-python examples/custom_mode.py
+python examples/unified_mode.py
 ```
 
 ## 功能说明
