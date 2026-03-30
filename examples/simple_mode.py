@@ -2,7 +2,7 @@
 import httpx
 import time
 
-BASE_URL = "http://127.0.0.1:8000/api"
+BASE_URL = "http://127.0.0.1:8005/api"
 
 def create_simple_task():
     # 只需要描述内容，可以开启/关闭 纯背景音乐 (make_instrumental)

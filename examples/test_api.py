@@ -3,7 +3,7 @@ import httpx
 import sys
 
 # API 基础地址（根据实际运行地址修改）
-BASE_URL = "http://127.0.0.1:8000/api"
+BASE_URL = "http://127.0.0.1:8005/api"
 
 def test_generate_song(prompt: str):
     """

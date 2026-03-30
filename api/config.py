@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     pool_max_size: int = 10
     api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    api_port: int = 8005
 
     scheduler_hour: int = 0
     scheduler_minute: int = 0
