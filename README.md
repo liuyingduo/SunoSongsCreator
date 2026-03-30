@@ -1,50 +1,87 @@
 # SunoSongsCreator
-About High quality songs generation by https://www.suno.ai/. Reverse engineered API.
 
-## How to
-- Login to https://app.suno.ai/ and generate some songs.
-- Use `Chrome` or other browsers to inspect the network requests (F12 -> XHR).
-- Clone this REPO -> `git clone https://github.com/yihong0618/SunoSongsCreator.git`
-- XHR find cookie in this url -> https://clerk.suno.com/v1/client?_clerk_js_version=4.73.4
-- Copy the cookie.
-- You can import the cookie using `export SUNO_COOKIE='<your-suno-cookie>'` or rename `.env.example` to `.env` and fill in `SUNO_COOKIE`.
+High-quality songs generation by https://www.suno.ai/. Reverse engineered API.
 
-## Usage
+## 项目结构
 
 ```
-python -m suno --prompt 'a big red dream song'
+suno/           # Suno 逆向 API 代码（底层库）
+api/             # FastAPI 服务层（对外 API）
 ```
 
-or
-```
-pip install -U suno_songs
+## Suno 逆向库（CLI / SDK 用）
+
+```bash
+pip install -e .
+suno --prompt 'a big red dream song'
 ```
 
 ```python
 from suno import SongsGen
-i = SongsGen('cookie') # Replace 'cookie'
+
+i = SongsGen("cookie")
 print(i.get_limit_left())
-i.save_songs("a blue cyber dream song", './output')
+i.save_songs("a blue cyber dream song", "./output")
 ```
 
-Custom mode
+## API 服务
 
-```python
-#you can use custom mode
-from suno import SongsGen
-i = SongsGen('cookie') # Replace 'cookie'
-print(i.get_limit_left())
-i.save_songs("大江东去，浪淘尽，千古风流人物。故垒西边，人道是、三国周郎赤壁。乱石穿空，惊涛拍岸，卷起千堆雪。江山如画，一时多少豪杰。遥想公瑾当年，小乔初嫁了，雄姿英发。", is_custom=True, title="custom", tags="轻松的R&B, BPM60, 小调, 电吉他、贝斯、键盘和轻鼓, 男性歌手") 
+### 启动
+
+```bash
+# 安装依赖
+pip install -e .
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入 MONGODB_URL 和其他配置
+
+# 启动服务
+uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Get song library
+### API 端点
 
-```python
-from suno import SongsGen
-i = SongsGen('cookie') # Replace 'cookie'
-print(i.get_song_library())
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/accounts` | 注册账号（发送 cookie） |
+| GET | `/api/accounts` | 列出所有已注册账号 |
+| DELETE | `/api/accounts/{email}` | 删除账号 |
+| POST | `/api/tasks` | 创建歌曲生成任务 |
+| GET | `/api/tasks/{task_id}` | 查询任务状态 |
+| GET | `/api/health` | 健康检查 |
+
+### API 示例
+
+```bash
+# 注册账号
+curl -X POST "http://localhost:8000/api/accounts" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "cookie": "__session=xxxx"}'
+
+# 创建生成任务
+curl -X POST "http://localhost:8000/api/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a big red dream song"}'
+
+# 查询任务
+curl "http://localhost:8000/api/tasks/<task_id>"
 ```
 
-## Thanks
+## 配置
 
-- All my 爱发电 sponsors https://afdian.net/a/yihong0618?tab=sponsor
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MONGODB_URL` | `mongodb://localhost:27017` | MongoDB 连接地址 |
+| `MONGODB_DB` | `suno_api` | 数据库名 |
+| `POOL_MAX_SIZE` | `10` | 账号池最大容量 |
+| `API_HOST` | `0.0.0.0` | 服务监听地址 |
+| `API_PORT` | `8000` | 服务监听端口 |
+| `SCHEDULER_HOUR` | `0` | 每日调度时间（小时，0-23） |
+| `SCHEDULER_MINUTE` | `0` | 每日调度时间（分钟） |
+
+## 架构说明
+
+- **账号池**：维护最多 N 个有余量的账号，自动调度生成请求
+- **余额同步**：每次生成请求后自动更新余额；每天凌晨自动刷新所有账号余额
+- **异步化**：所有数据库操作、HTTP 请求、调度任务均为异步
