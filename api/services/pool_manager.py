@@ -1,4 +1,5 @@
-"""账号池管理服务——核心调度逻辑，维护可用账号队列。"""
+"""Account pool management for song generation workers."""
+
 import asyncio
 import logging
 from collections import deque
@@ -48,12 +49,14 @@ class PoolManager:
             if acc.has_credit:
                 credits = await self._refresh_account_credits(acc)
                 if credits and (credits.get("total_credits", 0) > 0 or credits.get("free_songs", 0) > 0):
-                    await self._add_to_pool(PoolAccount(
-                        account_name=acc.account_name,
-                        cookie=acc.cookie,
-                        total_credits=credits.get("total_credits", 0),
-                        free_songs=credits.get("free_songs", 0),
-                    ))
+                    await self._add_to_pool(
+                        PoolAccount(
+                            account_name=acc.account_name,
+                            cookie=acc.cookie,
+                            total_credits=credits.get("total_credits", 0),
+                            free_songs=credits.get("free_songs", 0),
+                        )
+                    )
         logger.info(f"Account pool initialized with {len(self._pool)} accounts.")
 
     async def shutdown(self) -> None:
@@ -89,24 +92,37 @@ class PoolManager:
         await self._repo.set_in_pool(account_name, False)
         logger.info(f"Removed {account_name} from pool.")
 
-    @asynccontextmanager
-    async def acquire(self):
-        """从池中获取一个可用账号，使用完毕后交还。"""
-        account: PoolAccount | None = None
+    async def reserve_account(self) -> PoolAccount:
+        """Reserve an available account so task submission can fail fast."""
         async with self._lock:
             for acc in self._pool:
                 if acc.has_credit and not acc.in_use:
-                    account = acc
                     acc.in_use = True
-                    break
+                    return acc
+        raise PoolExhaustedError("No available accounts in the pool.")
 
-        if account is None:
-            raise PoolExhaustedError("No available accounts in the pool.")
+    async def get_reserved_account(self, account_name: str) -> PoolAccount:
+        async with self._lock:
+            for acc in self._pool:
+                if acc.account_name == account_name:
+                    return acc
+        raise PoolExhaustedError(f"Reserved account '{account_name}' is unavailable.")
 
+    async def release_account(self, account_name: str) -> None:
+        async with self._lock:
+            for acc in self._pool:
+                if acc.account_name == account_name:
+                    acc.in_use = False
+                    return
+
+    @asynccontextmanager
+    async def acquire(self):
+        """Compatibility helper for callers that want a scoped reservation."""
+        account = await self.reserve_account()
         try:
             yield account
         finally:
-            account.in_use = False
+            await self.release_account(account.account_name)
 
     async def return_account(self, account_name: str) -> None:
         async with self._lock:
@@ -118,7 +134,7 @@ class PoolManager:
                     return
 
     async def _replenish_pool(self) -> None:
-        """当池中账号少于最大容量时，从数据库补充。"""
+        """Fill the pool back up from active accounts when capacity allows."""
         while len(self._pool) < self._settings.pool_max_size:
             accounts = await self._repo.find_active()
             in_pool_account_names = {a.account_name for a in self._pool}
@@ -128,16 +144,18 @@ class PoolManager:
             for acc in candidates:
                 credits = await self._refresh_account_credits(acc)
                 if credits and (credits.get("total_credits", 0) > 0 or credits.get("free_songs", 0) > 0):
-                    await self._add_to_pool(PoolAccount(
-                        account_name=acc.account_name,
-                        cookie=acc.cookie,
-                        total_credits=credits.get("total_credits", 0),
-                        free_songs=credits.get("free_songs", 0),
-                    ))
+                    await self._add_to_pool(
+                        PoolAccount(
+                            account_name=acc.account_name,
+                            cookie=acc.cookie,
+                            total_credits=credits.get("total_credits", 0),
+                            free_songs=credits.get("free_songs", 0),
+                        )
+                    )
                     break
 
     async def check_and_update_after_request(self, account_name: str) -> None:
-        """请求结束后检查余额并更新池。"""
+        """Refresh credits and release the reserved account after a task ends."""
         accounts = await self._repo.find_active()
         acc_in_db = next((a for a in accounts if a.account_name == account_name), None)
         if not acc_in_db:
@@ -151,12 +169,13 @@ class PoolManager:
             if pool_acc:
                 pool_acc.total_credits = credits.get("total_credits", 0) if credits else 0
                 pool_acc.free_songs = credits.get("free_songs", 0) if credits else 0
+                pool_acc.in_use = False
                 if not pool_acc.has_credit:
                     await self._remove_from_pool(account_name)
                     await self._replenish_pool()
 
     async def register_account(self, account_name: str, cookie: str) -> dict:
-        """注册/更新账号，写入数据库并补充池。"""
+        """Register or update an account, then attempt to replenish the pool."""
         async with SongsGen(cookie) as gen:
             credits = await gen.get_limit_left()
             account = AccountInDB(
@@ -179,8 +198,12 @@ class PoolManager:
                 "pool_size": len(self._pool),
                 "max_size": self._settings.pool_max_size,
                 "accounts": [
-                    {"account_name": a.account_name, "total_credits": a.total_credits,
-                     "free_songs": a.free_songs, "in_use": a.in_use}
+                    {
+                        "account_name": a.account_name,
+                        "total_credits": a.total_credits,
+                        "free_songs": a.free_songs,
+                        "in_use": a.in_use,
+                    }
                     for a in self._pool
                 ],
             }
