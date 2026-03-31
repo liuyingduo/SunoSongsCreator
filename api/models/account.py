@@ -103,6 +103,12 @@ class AccountRepository:
             },
         )
 
+    async def update_cookie(self, account_name: str, cookie: str) -> None:
+        await self.col.update_one(
+            {"account_name": account_name},
+            {"$set": {"cookie": cookie, "updated_at": datetime.utcnow()}},
+        )
+
     async def set_in_pool(self, account_name: str, in_pool: bool) -> None:
         await self.col.update_one(
             {"account_name": account_name},

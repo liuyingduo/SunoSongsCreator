@@ -72,6 +72,11 @@ class SongsGen:
             cookies_dict[key] = morsel.value
         return Cookies(cookies_dict)
 
+    def export_cookie_string(self) -> str:
+        if self.session is None:
+            return self.cookie
+        return "; ".join(f"{key}={value}" for key, value in self.session.cookies.items())
+
     async def _get_auth_token(self) -> str:
         # 确保 session 已创建（如果是从 _ensure_session 调度的，这里 session 已经存在但还没设置 auth_token）
         # 这里直接用一个临时 session 或者在 _ensure_session 逻辑里闭环处理更好。
