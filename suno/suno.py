@@ -72,10 +72,50 @@ class SongsGen:
             cookies_dict[key] = morsel.value
         return Cookies(cookies_dict)
 
+    @staticmethod
+    def _cookie_domain_priority(domain: str) -> int:
+        normalized = (domain or "").lstrip(".").lower()
+        if normalized == "suno.com":
+            return 4
+        if normalized == "auth.suno.com":
+            return 3
+        if normalized.endswith(".suno.com"):
+            return 2
+        return 1
+
+    def _get_cookie_value(self, name: str) -> Optional[str]:
+        if self.session is None:
+            return None
+
+        best_cookie = None
+        best_priority = -1
+        for cookie in self.session.cookies.jar:
+            if cookie.name != name:
+                continue
+            priority = self._cookie_domain_priority(cookie.domain)
+            if priority > best_priority:
+                best_cookie = cookie
+                best_priority = priority
+
+        return best_cookie.value if best_cookie else None
+
     def export_cookie_string(self) -> str:
         if self.session is None:
             return self.cookie
-        return "; ".join(f"{key}={value}" for key, value in self.session.cookies.items())
+
+        selected_cookies = {}
+        for cookie in self.session.cookies.jar:
+            existing = selected_cookies.get(cookie.name)
+            if existing is None:
+                selected_cookies[cookie.name] = cookie
+                continue
+
+            current_priority = self._cookie_domain_priority(cookie.domain)
+            existing_priority = self._cookie_domain_priority(existing.domain)
+            if current_priority >= existing_priority:
+                selected_cookies[cookie.name] = cookie
+
+        return "; ".join(f"{cookie.name}={cookie.value}" for cookie in selected_cookies.values())
 
     async def _get_auth_token(self) -> str:
         # 确保 session 已创建（如果是从 _ensure_session 调度的，这里 session 已经存在但还没设置 auth_token）
@@ -109,7 +149,7 @@ class SongsGen:
         return '{"token":"eyJ0aW1lc3RhbXAiOj' + str(timestamp_ms) + 'Z"}'
 
     def _get_device_id(self) -> str:
-        device_id_cookie = self.session.cookies.get("ajs_anonymous_id")
+        device_id_cookie = self._get_cookie_value("ajs_anonymous_id")
         if device_id_cookie:
             match = re.search(r'"(\w{8}-\w{4}-\w{4}-\w{4}-\w{12})"', device_id_cookie)
             if match:
