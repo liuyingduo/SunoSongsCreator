@@ -1,12 +1,29 @@
-"""统一示例：一个脚本覆盖所有常用字段。"""
+"""Unified example that submits one task and polls until completion."""
 
 import os
+import sys
 import time
 
 import httpx
 
-BASE_URL = os.getenv("SUNO_API_BASE_URL", "http://127.0.0.1:8005/api")
+BASE_URL = os.getenv("SUNO_API_BASE_URL", "http://207.180.218.216:8005/api")
 POLL_INTERVAL_SECONDS = 5
+TRANSIENT_POLL_STATUS_CODES = {502, 503, 504}
+MAX_CONSECUTIVE_POLL_ERRORS = 5
+
+
+def extract_error_message(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+    except Exception:
+        text = (resp.text or "").strip()
+        if text:
+            return text[:300]
+        return f"HTTP {resp.status_code}"
+
+    if isinstance(data, dict):
+        return str(data.get("detail") or data.get("error") or data)
+    return str(data)
 
 
 def create_task():
@@ -45,7 +62,10 @@ def create_task():
     print(f"   make_instrumental: {payload['make_instrumental']}")
 
     resp = httpx.post(f"{BASE_URL}/tasks", json=payload, timeout=30.0)
-    resp.raise_for_status()
+    if resp.is_error:
+        message = extract_error_message(resp)
+        print(f"❌ 提交失败（HTTP {resp.status_code}）: {message}")
+        sys.exit(1)
 
     task_id = resp.json()["task_id"]
     print(f"✅ 任务已提交，ID: {task_id}")
@@ -55,10 +75,39 @@ def create_task():
 def poll_task(task_id):
     print("⏳ 正在查询生成进度...")
     start_time = time.time()
+    consecutive_errors = 0
 
     while True:
-        resp = httpx.get(f"{BASE_URL}/tasks/{task_id}", timeout=30.0)
-        resp.raise_for_status()
+        try:
+            resp = httpx.get(f"{BASE_URL}/tasks/{task_id}", timeout=30.0)
+        except httpx.HTTPError as exc:
+            consecutive_errors += 1
+            if consecutive_errors >= MAX_CONSECUTIVE_POLL_ERRORS:
+                print(f"❌ 查询失败: {exc}")
+                return
+            print(f"⚠️ 查询异常，准备重试（{consecutive_errors}/{MAX_CONSECUTIVE_POLL_ERRORS}）: {exc}")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
+
+        if resp.is_error:
+            message = extract_error_message(resp)
+            if resp.status_code in TRANSIENT_POLL_STATUS_CODES:
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_CONSECUTIVE_POLL_ERRORS:
+                    print(f"❌ 查询失败（HTTP {resp.status_code}）: {message}")
+                    return
+                print(
+                    f"⚠️ 查询遇到临时错误（HTTP {resp.status_code}），"
+                    f"准备重试（{consecutive_errors}/{MAX_CONSECUTIVE_POLL_ERRORS}）: {message}"
+                )
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            print(f"❌ 查询失败（HTTP {resp.status_code}）: {message}")
+            return
+
+        consecutive_errors = 0
+
         data = resp.json()
         status = data["status"]
         elapsed = int(time.time() - start_time)
@@ -68,11 +117,11 @@ def poll_task(task_id):
             result = data.get("result") or {}
             for i, url in enumerate(result.get("song_url_list", []), 1):
                 print(f"   [{i}] {url}")
-            break
+            return
 
         if status == "failed":
             print(f"❌ 生成失败（约 {elapsed} 秒）: {data.get('error')}")
-            break
+            return
 
         print(f"   当前状态: {status}，已等待 {elapsed} 秒")
         time.sleep(POLL_INTERVAL_SECONDS)
